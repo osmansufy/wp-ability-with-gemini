@@ -18,56 +18,125 @@ define( 'GEMINI_WP_CHAT_VERSION', '1.0.0' );
 define( 'GEMINI_WP_CHAT_NONCE', 'gemini_wp_chat_nonce' );
 
 /**
- * Class to handle Gemini API communication and Abilities integration.
+ * Class to handle Gemini API communication and WordPress Abilities integration.
+ *
+ * This class implements a dynamic integration between WordPress Abilities API and
+ * Google's Gemini AI, enabling the chatbot to access WordPress content through
+ * registered abilities. The implementation follows these key principles:
+ *
+ * 1. **Dynamic Ability Registration**: Registers multiple content abilities on the
+ *    'wp_abilities_api_init' hook with proper namespacing (gemini-chatbot/*).
+ *
+ * 2. **Automatic Tool Generation**: Dynamically converts registered WP abilities
+ *    into Gemini function declarations, eliminating the need for hardcoded tools.
+ *
+ * 3. **Dynamic Execution**: Abilities are executed by name using the Abilities API
+ *    registry, allowing flexible addition of new capabilities without code changes.
+ *
+ * 4. **Schema Mapping**: Automatically transforms WordPress JSON Schema format
+ *    to Gemini-compatible parameter specifications.
+ *
+ * @package Gemini_WP_Chatbot
+ * @since 1.0.0
  */
 class Gemini_WP_Chatbot {
 
 	/**
-	 * Assumed to be available in the future / via an Abilities API feature plugin.
-	 * Registers a 'search_wp_content' ability to allow Gemini to search the site.
+	 * Registers multiple WordPress abilities for Gemini integration.
+	 * Hooked to 'wp_abilities_api_init' to properly integrate with the Abilities API.
 	 */
-	public function register_wp_ability() {
-		// IMPORTANT: This class 'Abilities\API' is conceptual, based on the WP Abilities API documentation.
-		// It will only work if the Abilities API is installed/included in your environment.
-		// if ( ! class_exists( 'Abilities\API' ) ) {
-		// 	add_action( 'admin_notices', function() {
-		// 		echo '<div class="notice notice-error"><p><strong>Gemini WP Ability Chatbot Error:</strong> The Abilities API is not active. The chatbot will only use its base knowledge.</p></div>';
-		// 	} );
-		// 	return;
-		// }
-
-		$search_callback = [ $this, 'execute_wp_search_ability' ];
-
-		// Register the ability: 'search_wp_content'
-		// This is the "WP ability" exposed to the AI model.
-			wp_register_ability( 'search_wp_content', [
-				'id'                => 'plugin/search_wp_content',
-				'name'              => 'search_wp_content',
-				'description'       => 'Retrieves relevant content snippets from the WordPress site\'s posts and pages based on a search query. Use this only when the user asks a question specifically about the site\'s content, like "what are your recent articles" or "do you have a post about [topic]".',
-				'permission_callback' => '__return_true', // Publicly accessible ability
-				'execution_callback' => $search_callback,
-				'schema'            => [
-					'type'       => 'object',
-					'properties' => [
-						'query' => [
-							'type'        => 'string',
-							'description' => 'The specific search term to use for querying the WordPress content database.',
-						],
+	public function register_wp_abilities() {
+		// Register ability: 'gemini-chatbot/search-content'
+		// Searches WordPress posts and pages based on a query
+		wp_register_ability( 'gemini-chatbot/search-content', [
+			'name'                => 'gemini-chatbot/search-content',
+			'description'         => 'Retrieves relevant content snippets from the WordPress site\'s posts and pages based on a search query. Use this when the user asks about site content, like "what are your recent articles" or "do you have a post about [topic]".',
+			'category'            => 'content',
+			'permission_callback' => '__return_true',
+			'execute_callback'    => [ $this, 'execute_search_ability' ],
+			'input_schema'        => [
+				'type'       => 'object',
+				'properties' => [
+					'query' => [
+						'type'        => 'string',
+						'description' => 'The specific search term to use for querying the WordPress content database.',
 					],
-					'required'   => [ 'query' ],
 				],
-			] );
-		
+				'required'   => [ 'query' ],
+			],
+			'output_schema'       => [
+				'type'        => 'string',
+				'description' => 'Formatted search results containing post titles, URLs, and content snippets.',
+			],
+		] );
+
+		// Register ability: 'gemini-chatbot/get-post'
+		// Gets a specific post by ID or slug
+		wp_register_ability( 'gemini-chatbot/get-post', [
+			'name'                => 'gemini-chatbot/get-post',
+			'description'         => 'Retrieves a specific WordPress post by ID or slug. Use this when the user asks for a specific post like "show me post 123" or "get the post with slug my-article".',
+			'category'            => 'content',
+			'permission_callback' => '__return_true',
+			'execute_callback'    => [ $this, 'execute_get_post_ability' ],
+			'input_schema'        => [
+				'type'       => 'object',
+				'properties' => [
+					'post_id' => [
+						'type'        => 'integer',
+						'description' => 'The WordPress post ID to retrieve.',
+					],
+					'slug'    => [
+						'type'        => 'string',
+						'description' => 'The WordPress post slug to retrieve.',
+					],
+				],
+			],
+			'output_schema'       => [
+				'type'        => 'string',
+				'description' => 'Full post details including title, content, URL, author, and date.',
+			],
+		] );
+
+		// Register ability: 'gemini-chatbot/list-posts'
+		// Lists recent posts with optional filtering
+		wp_register_ability( 'gemini-chatbot/list-posts', [
+			'name'                => 'gemini-chatbot/list-posts',
+			'description'         => 'Lists recent WordPress posts with optional filtering. Use this when the user asks for "recent posts", "latest articles", or posts of a specific type.',
+			'category'            => 'content',
+			'permission_callback' => '__return_true',
+			'execute_callback'    => [ $this, 'execute_list_posts_ability' ],
+			'input_schema'        => [
+				'type'       => 'object',
+				'properties' => [
+					'post_type' => [
+						'type'        => 'string',
+						'description' => 'The post type to retrieve (default: "post"). Can be "post" or "page".',
+						'default'     => 'post',
+					],
+					'limit'     => [
+						'type'        => 'integer',
+						'description' => 'Maximum number of posts to retrieve (default: 5, max: 20).',
+						'default'     => 5,
+						'minimum'     => 1,
+						'maximum'     => 20,
+					],
+				],
+			],
+			'output_schema'       => [
+				'type'        => 'string',
+				'description' => 'Formatted list of posts with titles, URLs, excerpts, and metadata.',
+			],
+		] );
 	}
 
 	/**
-	 * The actual PHP function that executes the WordPress search.
-	 * This is the 'execution_callback' for the 'search_wp_content' ability.
+	 * Executes the WordPress content search ability.
+	 * This is the execution callback for the 'gemini-chatbot/search-content' ability.
 	 *
 	 * @param array $args The arguments provided by the AI model's function call.
 	 * @return string The search result formatted as a string for the AI to use.
 	 */
-	public function execute_wp_search_ability( $args ) {
+	public function execute_search_ability( $args ) {
 		$search_query = isset( $args['query'] ) ? sanitize_text_field( $args['query'] ) : '';
 
 		if ( empty( $search_query ) ) {
@@ -103,11 +172,247 @@ class Gemini_WP_Chatbot {
 	}
 
 	/**
+	 * Executes the get post ability.
+	 * This is the execution callback for the 'gemini-chatbot/get-post' ability.
+	 *
+	 * @param array $args The arguments provided by the AI model's function call.
+	 * @return string|WP_Error The post details or error message.
+	 */
+	public function execute_get_post_ability( $args ) {
+		$post_id = isset( $args['post_id'] ) ? absint( $args['post_id'] ) : 0;
+		$slug    = isset( $args['slug'] ) ? sanitize_title( $args['slug'] ) : '';
+
+		// Get post by ID or slug
+		if ( $post_id > 0 ) {
+			$post = get_post( $post_id );
+		} elseif ( ! empty( $slug ) ) {
+			$post = get_page_by_path( $slug, OBJECT, [ 'post', 'page' ] );
+		} else {
+			return new WP_Error( 'missing_parameter', 'Either post_id or slug must be provided.' );
+		}
+
+		if ( ! $post || $post->post_status !== 'publish' ) {
+			return new WP_Error( 'post_not_found', 'The requested post was not found or is not published.' );
+		}
+
+		// Format post details for AI
+		$content = strip_tags( $post->post_content );
+		$author  = get_the_author_meta( 'display_name', $post->post_author );
+		$date    = get_the_date( '', $post );
+
+		$result = "POST DETAILS:\n\n";
+		$result .= "Title: " . $post->post_title . "\n";
+		$result .= "URL: " . get_permalink( $post ) . "\n";
+		$result .= "Author: " . $author . "\n";
+		$result .= "Date: " . $date . "\n";
+		$result .= "Type: " . $post->post_type . "\n\n";
+		$result .= "Content:\n" . $content . "\n";
+
+		return $result;
+	}
+
+	/**
+	 * Executes the list posts ability.
+	 * This is the execution callback for the 'gemini-chatbot/list-posts' ability.
+	 *
+	 * @param array $args The arguments provided by the AI model's function call.
+	 * @return string The formatted list of posts.
+	 */
+	public function execute_list_posts_ability( $args ) {
+		$post_type = isset( $args['post_type'] ) ? sanitize_text_field( $args['post_type'] ) : 'post';
+		$limit     = isset( $args['limit'] ) ? absint( $args['limit'] ) : 5;
+
+		// Ensure limit is within bounds
+		$limit = min( max( $limit, 1 ), 20 );
+
+		// Validate post type
+		if ( ! in_array( $post_type, [ 'post', 'page' ], true ) ) {
+			$post_type = 'post';
+		}
+
+		// Query posts
+		$query_args = [
+			'post_type'      => $post_type,
+			'posts_per_page' => $limit,
+			'post_status'    => 'publish',
+			'orderby'        => 'date',
+			'order'          => 'DESC',
+		];
+
+		$query = new WP_Query( $query_args );
+
+		if ( ! $query->have_posts() ) {
+			return "No {$post_type}s found.";
+		}
+
+		$result = "Recent {$post_type}s (showing {$query->post_count} of {$query->found_posts} total):\n\n";
+
+		while ( $query->have_posts() ) {
+			$query->the_post();
+			$excerpt = has_excerpt() ? get_the_excerpt() : substr( strip_tags( get_the_content() ), 0, 150 ) . '...';
+			$author  = get_the_author();
+			$date    = get_the_date();
+
+			$result .= "- TITLE: " . get_the_title() . "\n";
+			$result .= "  URL: " . get_permalink() . "\n";
+			$result .= "  Author: " . $author . "\n";
+			$result .= "  Date: " . $date . "\n";
+			$result .= "  Excerpt: " . $excerpt . "\n\n";
+		}
+
+		wp_reset_postdata();
+
+		return $result;
+	}
+
+	/**
+	 * Converts WordPress ability schemas to Gemini function declaration format.
+	 *
+	 * @param array $schema The WordPress ability input schema.
+	 * @return array The Gemini-compatible parameter format.
+	 */
+	private function convert_schema_to_gemini_format( $schema ) {
+		// If schema is already in the correct format, return it
+		if ( isset( $schema['type'] ) && isset( $schema['properties'] ) ) {
+			return $schema;
+		}
+
+		// Default schema structure
+		return [
+			'type'       => 'object',
+			'properties' => isset( $schema['properties'] ) ? $schema['properties'] : [],
+			'required'   => isset( $schema['required'] ) ? $schema['required'] : [],
+		];
+	}
+
+	/**
+	 * Gets Gemini tool declarations from registered WordPress abilities.
+	 * Dynamically converts all registered abilities to Gemini function declarations.
+	 *
+	 * @return array Array of Gemini function declarations.
+	 */
+	private function get_gemini_tools_from_abilities() {
+		$function_declarations = [];
+
+		// List of gemini-chatbot abilities we've registered
+		$gemini_abilities = [
+			'gemini-chatbot/search-content',
+			'gemini-chatbot/get-post',
+			'gemini-chatbot/list-posts',
+		];
+
+		// Check if wp_get_ability() function exists (more reliable for individual lookups)
+		if ( ! function_exists( 'wp_get_ability' ) && ! function_exists( 'wp_get_abilities' ) ) {
+			// Fallback to empty array if Abilities API is not available
+			return $function_declarations;
+		}
+
+		// Try to get abilities individually if wp_get_ability() is available
+		if ( function_exists( 'wp_get_ability' ) ) {
+			foreach ( $gemini_abilities as $ability_name ) {
+				$ability = wp_get_ability( $ability_name );
+				
+				if ( ! $ability || is_wp_error( $ability ) ) {
+					continue;
+				}
+
+				// Extract the ability name without namespace for Gemini
+				$function_name = str_replace( 'gemini-chatbot/', '', $ability_name );
+				$function_name = str_replace( '-', '_', $function_name );
+
+				// Get the input schema
+				$input_schema = isset( $ability['input_schema'] ) ? $ability['input_schema'] : [];
+				$parameters   = $this->convert_schema_to_gemini_format( $input_schema );
+
+				// Build function declaration
+				$function_declarations[] = [
+					'name'        => $function_name,
+					'description' => isset( $ability['description'] ) ? $ability['description'] : '',
+					'parameters'  => $parameters,
+				];
+			}
+		} else {
+			// Fallback to wp_get_abilities() if wp_get_ability() is not available
+			$abilities = wp_get_abilities();
+
+			if ( empty( $abilities ) || ! is_array( $abilities ) ) {
+				return $function_declarations;
+			}
+
+			// Filter for only gemini-chatbot abilities
+			foreach ( $abilities as $ability_name => $ability ) {
+				// Only include abilities in the gemini-chatbot namespace
+				if ( strpos( $ability_name, 'gemini-chatbot/' ) !== 0 ) {
+					continue;
+				}
+
+				// Extract the ability name without namespace for Gemini
+				$function_name = str_replace( 'gemini-chatbot/', '', $ability_name );
+				$function_name = str_replace( '-', '_', $function_name );
+
+				// Get the input schema
+				$input_schema = isset( $ability['input_schema'] ) ? $ability['input_schema'] : [];
+				$parameters   = $this->convert_schema_to_gemini_format( $input_schema );
+
+				// Build function declaration
+				$function_declarations[] = [
+					'name'        => $function_name,
+					'description' => isset( $ability['description'] ) ? $ability['description'] : '',
+					'parameters'  => $parameters,
+				];
+			}
+		}
+
+		return $function_declarations;
+	}
+
+	/**
+	 * Executes a registered WordPress ability by name.
+	 *
+	 * @param string $ability_name The name of the ability to execute (with gemini-chatbot/ namespace).
+	 * @param array  $args         The arguments to pass to the ability.
+	 * @return string The result of the ability execution.
+	 */
+	private function execute_ability( $ability_name, $args ) {
+		// Check if wp_has_ability() and wp_get_ability() functions exist
+		if ( ! function_exists( 'wp_has_ability' ) || ! function_exists( 'wp_get_ability' ) ) {
+			return 'Error: WordPress Abilities API is not available.';
+		}
+
+		// Check if ability exists
+		if ( ! wp_has_ability( $ability_name ) ) {
+			return "Error: Ability '{$ability_name}' is not registered.";
+		}
+
+		// Get the ability
+		$ability = wp_get_ability( $ability_name );
+
+		if ( ! $ability || ! isset( $ability['execute_callback'] ) ) {
+			return "Error: Ability '{$ability_name}' does not have a valid execution callback.";
+		}
+
+		// Execute the ability
+		$result = call_user_func( $ability['execute_callback'], $args );
+
+		// Handle WP_Error responses
+		if ( is_wp_error( $result ) ) {
+			return 'Error: ' . $result->get_error_message();
+		}
+
+		// Format result - ensure it's a string for Gemini
+		if ( is_array( $result ) || is_object( $result ) ) {
+			return wp_json_encode( $result );
+		}
+
+		return (string) $result;
+	}
+
+	/**
 	 * Constructor: Hooks into WordPress actions.
 	 */
 	public function __construct() {
-		// Assuming we can call register_wp_ability early on.
-		add_action( 'plugins_loaded', [ $this, 'register_wp_ability' ] );
+		// Register abilities on the proper Abilities API hook
+		add_action( 'wp_abilities_api_init', [ $this, 'register_wp_abilities' ] );
 		
 		// Enqueue chat assets
 		add_action( 'wp_enqueue_scripts', [ $this, 'enqueue_scripts' ] );
@@ -176,12 +481,14 @@ class Gemini_WP_Chatbot {
 		// If Gemini requests a function call, a multi-turn process is initiated.
 		if ( isset( $response['function_call'] ) ) {
 			$function_call = $response['function_call'];
-			$tool_result = '';
-
-			// Step 1: Execute the requested WP Ability
-			if ( $function_call['name'] === 'search_wp_content' ) {
-				$tool_result = $this->execute_wp_search_ability( $function_call['args'] );
-			}
+			
+			// Step 1: Execute the requested WP Ability dynamically
+			// Convert function name from Gemini format (with underscores) to WP ability name (with hyphens)
+			$function_name = $function_call['name'];
+			$ability_name = 'gemini-chatbot/' . str_replace( '_', '-', $function_name );
+			
+			// Execute the ability dynamically
+			$tool_result = $this->execute_ability( $ability_name, $function_call['args'] );
 
 			// Step 2: Send the tool result back to Gemini for the final answer
 			$final_response = $this->call_gemini_api_with_tool_result(
@@ -203,27 +510,15 @@ class Gemini_WP_Chatbot {
 
 	/**
 	 * Call the Gemini API, including the Abilities/Tools.
+	 * Dynamically generates tool declarations from registered WordPress abilities.
+	 *
+	 * @param string $prompt  The user prompt.
+	 * @param string $api_key The Gemini API key.
+	 * @return array The API response containing text or function call.
 	 */
 	private function call_gemini_api( $prompt, $api_key ) {
-		// Define the tool declaration based on the Abilities API registration
-		$tool_declaration = [
-			'function_declarations' => [
-				[
-					'name'        => 'search_wp_content',
-					'description' => 'Retrieves relevant content snippets from the WordPress site\'s posts and pages based on a search query. Use this only when the user asks a question specifically about the site\'s content.',
-					'parameters'  => [
-						'type'       => 'object',
-						'properties' => [
-							'query' => [
-								'type'        => 'string',
-								'description' => 'The specific search term to use for querying the WordPress content database.',
-							],
-						],
-						'required'   => [ 'query' ],
-					],
-				],
-			],
-		];
+		// Get dynamic tool declarations from registered abilities
+		$function_declarations = $this->get_gemini_tools_from_abilities();
 
 		$url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' . $api_key;
 		
@@ -231,8 +526,14 @@ class Gemini_WP_Chatbot {
 			'contents' => [
 				[ 'role' => 'user', 'parts' => [ [ 'text' => $prompt ] ] ]
 			],
-			'tools' => [ $tool_declaration ],
 		];
+
+		// Only add tools if we have function declarations
+		if ( ! empty( $function_declarations ) ) {
+			$body['tools'] = [
+				[ 'function_declarations' => $function_declarations ]
+			];
+		}
 
 		$response = wp_remote_post( $url, [
 			'headers' => [ 'Content-Type' => 'application/json' ],
