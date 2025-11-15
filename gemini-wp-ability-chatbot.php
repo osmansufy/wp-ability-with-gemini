@@ -294,40 +294,73 @@ class Gemini_WP_Chatbot {
 	private function get_gemini_tools_from_abilities() {
 		$function_declarations = [];
 
-		// Check if wp_get_abilities() function exists
-		if ( ! function_exists( 'wp_get_abilities' ) ) {
+		// List of gemini-chatbot abilities we've registered
+		$gemini_abilities = [
+			'gemini-chatbot/search-content',
+			'gemini-chatbot/get-post',
+			'gemini-chatbot/list-posts',
+		];
+
+		// Check if wp_get_ability() function exists (more reliable for individual lookups)
+		if ( ! function_exists( 'wp_get_ability' ) && ! function_exists( 'wp_get_abilities' ) ) {
 			// Fallback to empty array if Abilities API is not available
 			return $function_declarations;
 		}
 
-		// Get all registered abilities
-		$abilities = wp_get_abilities();
+		// Try to get abilities individually if wp_get_ability() is available
+		if ( function_exists( 'wp_get_ability' ) ) {
+			foreach ( $gemini_abilities as $ability_name ) {
+				$ability = wp_get_ability( $ability_name );
+				
+				if ( ! $ability || is_wp_error( $ability ) ) {
+					continue;
+				}
 
-		if ( empty( $abilities ) || ! is_array( $abilities ) ) {
-			return $function_declarations;
-		}
+				// Extract the ability name without namespace for Gemini
+				$function_name = str_replace( 'gemini-chatbot/', '', $ability_name );
+				$function_name = str_replace( '-', '_', $function_name );
 
-		// Filter for only gemini-chatbot abilities
-		foreach ( $abilities as $ability_name => $ability ) {
-			// Only include abilities in the gemini-chatbot namespace
-			if ( strpos( $ability_name, 'gemini-chatbot/' ) !== 0 ) {
-				continue;
+				// Get the input schema
+				$input_schema = isset( $ability['input_schema'] ) ? $ability['input_schema'] : [];
+				$parameters   = $this->convert_schema_to_gemini_format( $input_schema );
+
+				// Build function declaration
+				$function_declarations[] = [
+					'name'        => $function_name,
+					'description' => isset( $ability['description'] ) ? $ability['description'] : '',
+					'parameters'  => $parameters,
+				];
+			}
+		} else {
+			// Fallback to wp_get_abilities() if wp_get_ability() is not available
+			$abilities = wp_get_abilities();
+
+			if ( empty( $abilities ) || ! is_array( $abilities ) ) {
+				return $function_declarations;
 			}
 
-			// Extract the ability name without namespace for Gemini
-			$function_name = str_replace( 'gemini-chatbot/', '', $ability_name );
-			$function_name = str_replace( '-', '_', $function_name );
+			// Filter for only gemini-chatbot abilities
+			foreach ( $abilities as $ability_name => $ability ) {
+				// Only include abilities in the gemini-chatbot namespace
+				if ( strpos( $ability_name, 'gemini-chatbot/' ) !== 0 ) {
+					continue;
+				}
 
-			// Get the input schema
-			$input_schema = isset( $ability['input_schema'] ) ? $ability['input_schema'] : [];
-			$parameters   = $this->convert_schema_to_gemini_format( $input_schema );
+				// Extract the ability name without namespace for Gemini
+				$function_name = str_replace( 'gemini-chatbot/', '', $ability_name );
+				$function_name = str_replace( '-', '_', $function_name );
 
-			// Build function declaration
-			$function_declarations[] = [
-				'name'        => $function_name,
-				'description' => isset( $ability['description'] ) ? $ability['description'] : '',
-				'parameters'  => $parameters,
-			];
+				// Get the input schema
+				$input_schema = isset( $ability['input_schema'] ) ? $ability['input_schema'] : [];
+				$parameters   = $this->convert_schema_to_gemini_format( $input_schema );
+
+				// Build function declaration
+				$function_declarations[] = [
+					'name'        => $function_name,
+					'description' => isset( $ability['description'] ) ? $ability['description'] : '',
+					'parameters'  => $parameters,
+				];
+			}
 		}
 
 		return $function_declarations;
