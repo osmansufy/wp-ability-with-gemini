@@ -18,7 +18,26 @@ define( 'GEMINI_WP_CHAT_VERSION', '1.0.0' );
 define( 'GEMINI_WP_CHAT_NONCE', 'gemini_wp_chat_nonce' );
 
 /**
- * Class to handle Gemini API communication and Abilities integration.
+ * Class to handle Gemini API communication and WordPress Abilities integration.
+ *
+ * This class implements a dynamic integration between WordPress Abilities API and
+ * Google's Gemini AI, enabling the chatbot to access WordPress content through
+ * registered abilities. The implementation follows these key principles:
+ *
+ * 1. **Dynamic Ability Registration**: Registers multiple content abilities on the
+ *    'wp_abilities_api_init' hook with proper namespacing (gemini-chatbot/*).
+ *
+ * 2. **Automatic Tool Generation**: Dynamically converts registered WP abilities
+ *    into Gemini function declarations, eliminating the need for hardcoded tools.
+ *
+ * 3. **Dynamic Execution**: Abilities are executed by name using the Abilities API
+ *    registry, allowing flexible addition of new capabilities without code changes.
+ *
+ * 4. **Schema Mapping**: Automatically transforms WordPress JSON Schema format
+ *    to Gemini-compatible parameter specifications.
+ *
+ * @package Gemini_WP_Chatbot
+ * @since 1.0.0
  */
 class Gemini_WP_Chatbot {
 
